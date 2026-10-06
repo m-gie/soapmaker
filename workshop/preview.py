@@ -1,91 +1,117 @@
 """Draws workshop/preview.png (256x256, required by the PZ Workshop uploader).
 
-Drawn at 4x and scaled down for smooth edges. Run: python workshop/preview.py
+Uses the game's own item icons, read from your Project Zomboid install and scaled
+by whole numbers so the pixel art stays crisp. Run: python workshop/preview.py [game dir]
 """
 import pathlib
+import random
+import sys
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-S = 1024
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from pzpack import read_pack  # noqa: E402
+
+GAME = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "E:/SteamLibrary/steamapps/common/ProjectZomboid")
 OUT = pathlib.Path(__file__).with_name("preview.png")
 FONT = "C:/Windows/Fonts/seguibl.ttf"
+S = 256
 
 
-def vertical_gradient(size, top, bottom):
-    img = Image.new("RGB", size)
-    d = ImageDraw.Draw(img)
-    for y in range(size[1]):
-        t = y / (size[1] - 1)
-        d.line([(0, y), (size[0], y)], fill=tuple(int(a + (b - a) * t) for a, b in zip(top, bottom)))
-    return img
+def icons(*names):
+    wanted, found = set(names), {}
+    for pack in ("UI2.pack", "UI.pack"):
+        for _, page, entries in read_pack(GAME / "media/texturepacks" / pack):
+            for name, x, y, w, h, ox, oy, fw, fh in entries:
+                if name in wanted and name not in found:
+                    full = Image.new("RGBA", (fw, fh), (0, 0, 0, 0))
+                    full.paste(page.crop((x, y, x + w, y + h)), (ox, oy))
+                    found[name] = full
+    missing = wanted - found.keys()
+    assert not missing, f"icons not found: {missing}"
+    return found
 
 
-def blurred(img, draw_fn, radius):
-    layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    draw_fn(ImageDraw.Draw(layer))
-    img.alpha_composite(layer.filter(ImageFilter.GaussianBlur(radius)))
+def scaled(img, k):
+    return img.resize((img.width * k, img.height * k), Image.Resampling.NEAREST)
 
 
-def soap_bar(d, x, y, w, h, depth, top, side, front):
-    """A bar seen slightly from above: top face, front face, right side."""
-    d.polygon([(x, y), (x + w, y), (x + w + depth, y - depth * 0.6), (x + depth, y - depth * 0.6)], fill=top)
-    d.polygon([(x + w, y), (x + w + depth, y - depth * 0.6), (x + w + depth, y + h - depth * 0.6), (x + w, y + h)], fill=side)
-    d.rounded_rectangle([x, y, x + w, y + h], radius=18, fill=front)
-    # Engraved oval on the front.
-    d.rounded_rectangle([x + w * 0.2, y + h * 0.28, x + w * 0.8, y + h * 0.72], radius=int(h * 0.22), outline=side, width=8)
+def place(canvas, img, x, y, shadow=True):
+    """Pastes img with its bottom-centre at (x, y), with a soft ground shadow."""
+    left, top = x - img.width // 2, y - img.height
+    if shadow:
+        sh = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        ImageDraw.Draw(sh).ellipse([x - img.width * 0.42, y - 7, x + img.width * 0.42, y + 5], fill=(0, 0, 0, 120))
+        canvas.alpha_composite(sh.filter(ImageFilter.GaussianBlur(3)))
+    canvas.alpha_composite(img, (left, top))
+
+
+def creamy(img):
+    """Turns the stew in vanilla's pot icon into a creamy soap mix: every coloured
+    (saturated) pixel becomes cream of the same brightness; the grey metal stays."""
+    out = img.copy()
+    px = out.load()
+    for y in range(out.height):
+        for x in range(out.width):
+            r, g, b, a = px[x, y]
+            if a and max(r, g, b) - min(r, g, b) > 30:
+                lum = (r * 299 + g * 587 + b * 114) / 1000 / 255
+                t = min(1.0, 0.35 + lum * 1.1)
+                px[x, y] = (int(150 + 105 * t), int(130 + 110 * t), int(95 + 115 * t), a)
+    return out
 
 
 def main():
-    img = vertical_gradient((S, S), (92, 52, 28), (34, 18, 12)).convert("RGBA")
-    blurred(img, lambda d: d.ellipse([140, 120, 700, 700], fill=(255, 170, 80, 110)), 110)
-
-    # Steam above the pot.
-    def steam(d):
-        for cx, cy, r in [(330, 250, 70), (400, 190, 60), (360, 120, 50), (470, 240, 55), (450, 150, 42)]:
-            d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 245, 230, 120))
-    blurred(img, steam, 22)
-
-    # Fire under the pot.
-    def fire(d):
-        d.polygon([(250, 640), (300, 520), (330, 590), (380, 470), (420, 580), (460, 500), (500, 640)], fill=(255, 140, 40, 255))
-        d.polygon([(300, 640), (340, 560), (380, 600), (420, 540), (450, 640)], fill=(255, 215, 90, 255))
-    blurred(img, fire, 6)
+    ic = icons("Item_Pot_Forged_Soup", "Item_Soap", "Item_Lard", "Item_Charcoal", "Item_Book", "Item_MagazineFood")
+    random.seed(5)
+    img = Image.new("RGBA", (S, S))
     d = ImageDraw.Draw(img)
-    for x1, x2 in ((210, 520), (240, 500)):
-        d.line([(x1, 655), (x2, 625)], fill=(90, 56, 36), width=34)
-        d.line([(x2, 655), (x1, 625)], fill=(110, 70, 44), width=34)
+    # Warm cabin wall, then wooden floor planks from y=150.
+    for y in range(S):
+        t = y / S
+        d.line([(0, y), (S, y)], fill=(int(70 - 30 * t), int(42 - 18 * t), int(28 - 12 * t), 255))
+    for i, ty in enumerate(range(150, S, 12)):
+        shade = (112, 76, 48, 255) if i % 2 == 0 else (98, 66, 42, 255)
+        d.rectangle([0, ty, S, ty + 11], fill=shade)
+        d.line([(0, ty), (S, ty)], fill=(64, 42, 28, 255))
+        for x in range((i * 37) % 64, S, 64):
+            d.line([(x, ty), (x, ty + 11)], fill=(70, 46, 30, 255))
+    d.line([(0, 149), (S, 149)], fill=(40, 26, 18, 255), width=3)
 
-    # Iron pot: body, rim, handles, the soap mix inside.
-    d.ellipse([180, 330, 560, 600], fill=(52, 52, 58))
-    d.rectangle([180, 330, 560, 470], fill=(52, 52, 58))
-    d.ellipse([200, 360, 300, 560], fill=(72, 72, 80))
-    d.ellipse([170, 290, 570, 380], fill=(80, 80, 88))
-    d.ellipse([196, 304, 544, 366], fill=(236, 214, 170))
-    d.ellipse([240, 314, 340, 344], fill=(250, 236, 204))
-    for hx in (150, 562):
-        d.rounded_rectangle([hx, 352, hx + 28, 420], radius=12, fill=(40, 40, 46))
+    # Glow of the fire under the pot.
+    glow = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse([60, 150, 196, 240], fill=(255, 150, 50, 110))
+    img.alpha_composite(glow.filter(ImageFilter.GaussianBlur(18)))
 
-    # Shadow, then a stack of three soap bars in front.
-    blurred(img, lambda d2: d2.ellipse([470, 780, 900, 840], fill=(0, 0, 0, 150)), 16)
-    d = ImageDraw.Draw(img)
-    soap_bar(d, 500, 700, 330, 110, 70, (255, 226, 200), (214, 160, 128), (244, 196, 160))
-    soap_bar(d, 540, 590, 310, 104, 64, (232, 244, 220), (160, 190, 140), (206, 226, 186))
-    soap_bar(d, 520, 484, 300, 100, 60, (250, 238, 214), (204, 178, 130), (238, 220, 180))
+    # Back row: the book and the magazine that teach the recipe.
+    place(img, scaled(ic["Item_Book"], 2), 34, 156)
+    place(img, scaled(ic["Item_MagazineFood"], 2), 222, 156)
 
-    # A few bubbles.
-    for cx, cy, r in [(870, 380, 34), (800, 300, 22), (920, 270, 18), (640, 400, 16)]:
-        d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(255, 245, 230), width=6)
-        d.ellipse([cx - r * 0.6, cy - r * 0.6, cx - r * 0.1, cy - r * 0.25], fill=(255, 250, 240))
+    # Pixel flames, then the pot of soap mix on them.
+    f = ImageDraw.Draw(img)
+    for _ in range(140):
+        x = int(random.gauss(128, 20))
+        y = int(random.gauss(214, 5))
+        f.rectangle([x, y, x + 2, y + 2], fill=random.choice([(255, 196, 64, 255), (255, 132, 32, 255), (230, 70, 20, 255)]))
+    place(img, scaled(creamy(ic["Item_Pot_Forged_Soup"]), 4), 128, 204, shadow=False)
 
-    # Title with a soft shadow.
-    font = ImageFont.truetype(FONT, 136)
+    # Steam: soft pixel puffs above the pot.
+    for cx, cy, r in [(112, 74, 6), (126, 62, 7), (140, 70, 5), (120, 48, 5), (134, 40, 4)]:
+        f.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(235, 225, 210, 150))
+
+    # Front row: ingredients on the left, the finished soap on the right.
+    place(img, scaled(ic["Item_Lard"], 2), 36, 246)
+    place(img, scaled(ic["Item_Charcoal"], 2), 82, 252)
+    place(img, scaled(ic["Item_Soap"], 2), 186, 244)
+    place(img, scaled(ic["Item_Soap"], 2), 222, 252)
+
+    # Title with a dark outline, like the game's UI text.
+    font = ImageFont.truetype(FONT, 32)
     text = "SOAPMAKER"
-    w = d.textlength(text, font=font)
-    x, y = (S - w) / 2, 852
-    blurred(img, lambda d2: d2.text((x + 6, y + 10), text, font=font, fill=(0, 0, 0, 180)), 8)
-    ImageDraw.Draw(img).text((x, y), text, font=font, fill=(255, 238, 205), stroke_width=4, stroke_fill=(70, 36, 18))
+    w = f.textlength(text, font=font)
+    f.text(((S - w) / 2, 6), text, font=font, fill=(255, 238, 205, 255), stroke_width=3, stroke_fill=(40, 22, 12, 255))
 
-    img.convert("RGB").resize((256, 256), Image.Resampling.LANCZOS).save(OUT, optimize=True)
+    img.convert("RGB").save(OUT, optimize=True)
     print(OUT, OUT.stat().st_size, "bytes")
 
 
