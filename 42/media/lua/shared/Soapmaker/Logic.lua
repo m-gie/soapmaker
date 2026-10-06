@@ -32,3 +32,16 @@ function Soapmaker.mirrorLoot(roots, map)
     for _, root in ipairs(roots) do walk(root) end
     return added
 end
+
+-- Adds recipe to each trait/profession definition that doesn't grant it yet; returns how many.
+-- pairs, not ipairs: a definition missing from this game version leaves a gap.
+function Soapmaker.grantRecipe(definitions, recipe)
+    local added = 0
+    for _, d in pairs(definitions) do
+        if not d:isGrantedRecipe(recipe) then
+            d:addGrantedRecipe(recipe)
+            added = added + 1
+        end
+    end
+    return added
+end
