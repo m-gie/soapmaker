@@ -1,0 +1,11 @@
+version=1
+title=Soapmaker
+description=Make your own soap.
+description=
+description=- Mix Soap: 1 lard + 1 charcoal + 1 L of water in a cooking pot gives 2 Raw Soap. Cook them for 60 minutes in an oven, on a campfire or a barbecue to get soap bars.
+description=- You have to learn it first: read "Fight Club" by Chuck Palahniuk, or the magazine "Soapmaker's Guide to Galaxy". They turn up where fiction books and cooking magazines do.
+description=- Out of lard? Trim Fat from 2 raw cuts of pork, beef, venison or mutton with a knife, then cook the Raw Fat for 60 minutes to render lard.
+description=
+description=Pairs well with Soapy Water, which lets you clean with soap, but doesn't need it.
+tags=Build 42;Multiplayer
+visibility=unlisted
